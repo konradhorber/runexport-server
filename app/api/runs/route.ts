@@ -7,5 +7,5 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   const body = await request.json();
   console.log("POST /api/runs:", JSON.stringify(body, null, 2));
-  return NextResponse.json(body);
+  return new NextResponse(null, { status: 200 });
 }
