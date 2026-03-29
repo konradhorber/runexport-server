@@ -4,6 +4,16 @@ import { join } from "path";
 
 const DATA_FILE = join(process.cwd(), "data/runs.json");
 
+interface WorkoutActivity {
+  startDate: string;
+  endDate: string;
+  duration: number;
+  distance?: number;
+  averageHeartRate?: number;
+  averagePace?: number;
+  activityType: string;
+}
+
 interface KilometerSplit {
   kilometer: number;
   pace: number;
@@ -18,6 +28,7 @@ interface Run {
   endDate: string;
   distance: number;
   duration: number;
+  isIndoor: boolean;
   calories?: number;
   averageHeartRate?: number;
   maxHeartRate?: number;
@@ -25,6 +36,7 @@ interface Run {
   totalElevationAscent?: number;
   totalElevationDescent?: number;
   splits?: KilometerSplit[];
+  workoutActivities?: WorkoutActivity[];
 }
 
 interface RunExportRequest {
