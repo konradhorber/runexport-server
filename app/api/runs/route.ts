@@ -54,7 +54,19 @@ function saveRuns(runs: Run[]): void {
   writeFileSync(DATA_FILE, JSON.stringify(runs, null, 2), "utf8");
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const { searchParams } = request.nextUrl;
+  const from = searchParams.get("from");
+
+  if (from !== null) {
+    const fromDate = new Date(from);
+    if (isNaN(fromDate.getTime())) {
+      return NextResponse.json({ error: "Invalid 'from' date. Use ISO 8601 format." }, { status: 400 });
+    }
+    const runs = loadRuns().filter((r) => new Date(r.startDate) >= fromDate);
+    return NextResponse.json(runs);
+  }
+
   return NextResponse.json(loadRuns());
 }
 
