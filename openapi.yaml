@@ -1,0 +1,266 @@
+openapi: 3.0.3
+
+info:
+  title: runexport-server
+  version: 0.1.0
+  description: |
+    Receives running workout data exported from the iOS runexport app and serves
+    it to the runexport-agent for training plan analysis.
+
+    **Units:** distances in meters · durations in seconds · heart rates in bpm · elevations in meters (HealthKit SI units, no conversion applied)
+
+    **Dates:** ISO 8601 strings in UTC, e.g. `2026-03-27T10:00:00Z`
+
+servers:
+  - url: http://localhost:3000/api
+    description: Local development
+
+paths:
+  /runs:
+    get:
+      summary: List runs
+      description: Returns all persisted runs, optionally filtered by start date.
+      parameters:
+        - name: from
+          in: query
+          required: false
+          description: |
+            Return only runs whose `startDate` is on or after this value.
+            Must be a valid ISO 8601 date string.
+          schema:
+            type: string
+            format: date-time
+            example: "2026-03-01T00:00:00Z"
+      responses:
+        "200":
+          description: Array of runs. Empty array if none match.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Run"
+        "400":
+          description: Invalid `from` parameter.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    post:
+      summary: Export runs
+      description: |
+        Receives a full run history export from the iOS app.
+        The app sends all runs on every export — the server deduplicates by run `id`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunExportRequest"
+      responses:
+        "200":
+          description: Export accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportResponse"
+
+components:
+  schemas:
+
+    RunExportRequest:
+      type: object
+      required: [deviceId, exportDate, runs]
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+          description: Persistent UUID generated on first app launch (stored in UserDefaults).
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        exportDate:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of when the export was triggered.
+          example: "2026-03-28T10:00:00Z"
+        runs:
+          type: array
+          description: Full run history from HealthKit. Server deduplicates by `id`.
+          items:
+            $ref: "#/components/schemas/Run"
+
+    ExportResponse:
+      type: object
+      required: [success, runsProcessed, message]
+      properties:
+        success:
+          type: boolean
+          example: true
+        runsProcessed:
+          type: integer
+          description: Number of runs that were new (not duplicates).
+          example: 3
+        message:
+          type: string
+          example: "3 new run(s) added, 5 duplicate(s) skipped"
+
+    Run:
+      type: object
+      required: [id, startDate, endDate, distance, duration, isIndoor, workoutActivities]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: HealthKit workout UUID. Stable across exports; used for deduplication.
+          example: "AF613C8A-B391-4322-A6CD-07655BE3F7B0"
+        startDate:
+          type: string
+          format: date-time
+          example: "2026-03-27T06:34:26Z"
+        endDate:
+          type: string
+          format: date-time
+          example: "2026-03-27T07:08:41Z"
+        distance:
+          type: number
+          description: Total distance in meters.
+          example: 5364.9
+        duration:
+          type: number
+          description: Active duration in seconds (`HKWorkout.duration`).
+          example: 2055.2
+        isIndoor:
+          type: boolean
+          description: |
+            `true` for treadmill / indoor runs (`HKMetadataKeyIndoorWorkout`).
+            When `true`, GPS route and `splits` are absent; pace data comes from the
+            watch accelerometer and should be treated with caution.
+          example: false
+        calories:
+          type: number
+          nullable: true
+          description: Active energy burned in kcal. `null` if not recorded.
+          example: 415.4
+        averageHeartRate:
+          type: number
+          nullable: true
+          description: Average heart rate in bpm over the full workout. `null` if no HR sensor data.
+          example: 139.3
+        maxHeartRate:
+          type: number
+          nullable: true
+          description: Maximum heart rate in bpm. `null` if no HR sensor data.
+          example: 152
+        averagePacePerKilometer:
+          type: number
+          nullable: true
+          description: |
+            Seconds per km, computed as `duration / (distance / 1000)`.
+            `null` if distance is zero.
+          example: 383.1
+        totalElevationAscent:
+          type: number
+          nullable: true
+          description: Total ascent in meters. `null` if not recorded (e.g. indoor runs).
+          example: 27.7
+        totalElevationDescent:
+          type: number
+          nullable: true
+          description: Total descent in meters. `null` if not recorded.
+          example: 31.2
+        splits:
+          type: array
+          nullable: true
+          description: |
+            Per-km breakdown. `null` when no GPS route is available (indoor runs,
+            or outdoor runs where location was not recorded).
+          items:
+            $ref: "#/components/schemas/KilometerSplit"
+        workoutActivities:
+          type: array
+          description: |
+            Per-phase breakdown from `HKWorkout.workoutActivities` (iOS 16+).
+            Always present with at least one entry:
+            - **Plain run:** one entry covering the full workout.
+            - **Structured workout:** one entry per phase in chronological order.
+              Alternate between faster (work) and slower (recovery) phases —
+              distinguish them by `averagePace` or `averageHeartRate`, not `activityType`.
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/WorkoutActivity"
+
+    WorkoutActivity:
+      type: object
+      required: [startDate, endDate, duration, activityType]
+      properties:
+        startDate:
+          type: string
+          format: date-time
+          example: "2026-03-27T06:34:26Z"
+        endDate:
+          type: string
+          format: date-time
+          example: "2026-03-27T07:08:41Z"
+        duration:
+          type: number
+          description: Phase duration in seconds.
+          example: 2055.2
+        distance:
+          type: number
+          nullable: true
+          description: Distance covered in meters. `null` if no distance data for this phase.
+          example: 5364.9
+        averageHeartRate:
+          type: number
+          nullable: true
+          description: Average heart rate in bpm during this phase. `null` if no HR data.
+          example: 139.5
+        averagePace:
+          type: number
+          nullable: true
+          description: Seconds per km during this phase. `null` if `distance` is unavailable.
+          example: 383.1
+        activityType:
+          type: string
+          description: |
+            HealthKit activity type. `"running"` or `"walking"` for known types;
+            `"other(N)"` where N is the raw HealthKit integer for anything else.
+          example: "running"
+
+    KilometerSplit:
+      type: object
+      required: [kilometer, pace]
+      properties:
+        kilometer:
+          type: integer
+          description: 1-based km index.
+          example: 1
+        pace:
+          type: number
+          description: |
+            Seconds per km for this split. For the partial final km this is normalised:
+            `elapsed_seconds / (partial_distance_m / 1000)`.
+          example: 359.2
+        averageHeartRate:
+          type: number
+          nullable: true
+          description: Average heart rate in bpm during this km. `null` if no HR data.
+          example: 134.3
+        elevationAscent:
+          type: number
+          nullable: true
+          description: Meters gained in this km. `null` if net gain is zero or negative.
+          example: 2.8
+        elevationDescent:
+          type: number
+          nullable: true
+          description: Meters lost in this km. `null` if net loss is zero or negative.
+          example: 5.9
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: "Invalid 'from' date. Use ISO 8601 format."
